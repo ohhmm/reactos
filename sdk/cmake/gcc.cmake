@@ -39,13 +39,12 @@ if(STACK_PROTECTOR)
 endif()
 
 # Compiler Core
-add_compile_options(-pipe -fms-extensions -fno-strict-aliasing)
+# note: -fno-common is default since GCC 10
+add_compile_options(-pipe -fms-extensions -fno-strict-aliasing -fno-common)
 
 # Prevent GCC from searching any of the default directories.
 # The case for C++ is handled through the reactos_c++ INTERFACE library
 add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:CXX>>:-nostdinc>")
-
-add_compile_options(-mstackrealign)
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-aggressive-loop-optimizations)
@@ -56,7 +55,6 @@ elseif(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     add_compile_options("$<$<COMPILE_LANGUAGE:C>:-Wno-microsoft>")
     add_compile_options(-Wno-pragma-pack)
     add_compile_options(-fno-associative-math)
-    add_compile_options(-fcommon)
 
     if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0)
         # disable "libcall optimization"
@@ -102,6 +100,7 @@ add_compile_options(-Wno-char-subscripts -Wno-multichar -Wno-unused-value)
 add_compile_options(-Wno-unused-const-variable)
 add_compile_options(-Wno-unused-local-typedefs)
 add_compile_options(-Wno-deprecated)
+add_compile_options(-Wno-unused-result) # FIXME To be removed when CORE-17637 is resolved
 
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-Wno-maybe-uninitialized)
@@ -144,7 +143,7 @@ if(LTCG)
 endif()
 
 if(ARCH STREQUAL "i386")
-    add_compile_options(-fno-optimize-sibling-calls -fno-omit-frame-pointer)
+    add_compile_options(-fno-optimize-sibling-calls -fno-omit-frame-pointer -mstackrealign)
     if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
         add_compile_options(-mpreferred-stack-boundary=3 -fno-set-stack-executable)
     endif()
@@ -166,8 +165,6 @@ elseif(ARCH STREQUAL "arm")
     add_definitions(-U_UNICODE -UUNICODE)
     add_definitions(-D__MSVCRT__) # DUBIOUS
 endif()
-
-add_definitions(-D_inline=__inline)
 
 # Fix build with GLIBCXX + our c++ headers
 add_definitions(-D_GLIBCXX_HAVE_BROKEN_VSWPRINTF)
@@ -193,27 +190,34 @@ if(SEPARATE_DBG)
     else()
         set(SYMBOL_FILE <TARGET>)
     endif()
-    set(OBJCOPY ${CMAKE_OBJCOPY})
+
+    if (NOT NO_ROSSYM)
+        get_target_property(RSYM native-rsym IMPORTED_LOCATION)
+        set(strip_debug "${RSYM} -s ${REACTOS_SOURCE_DIR} <TARGET> <TARGET>")
+    else()
+        set(strip_debug "${CMAKE_STRIP} --strip-debug <TARGET>")
+    endif()
+
     set(CMAKE_C_LINK_EXECUTABLE
         "<CMAKE_C_COMPILER> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_CXX_LINK_EXECUTABLE
         "<CMAKE_CXX_COMPILER> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_C_CREATE_SHARED_LIBRARY
         "<CMAKE_C_COMPILER> <CMAKE_SHARED_LIBRARY_C_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_CXX_CREATE_SHARED_LIBRARY
         "<CMAKE_CXX_COMPILER> <CMAKE_SHARED_LIBRARY_CXX_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
     set(CMAKE_RC_CREATE_SHARED_LIBRARY
         "<CMAKE_C_COMPILER> <CMAKE_SHARED_LIBRARY_C_FLAGS> <LINK_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>"
-        "${OBJCOPY} --only-keep-debug <TARGET> ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
-        "${OBJCOPY} --strip-debug <TARGET>")
+        "${CMAKE_STRIP} --only-keep-debug <TARGET> -o ${REACTOS_BINARY_DIR}/symbols/${SYMBOL_FILE}"
+        ${strip_debug})
 elseif(NO_ROSSYM)
     # Dwarf-based build
     message(STATUS "Generating a dwarf-based build (no rsym)")
@@ -269,24 +273,24 @@ set(CMAKE_DEPFILE_FLAGS_RC "--preprocessor=\"${CMAKE_C_COMPILER}\" ${RC_PREPROCE
 # Optional 3rd parameter: stdcall stack bytes
 function(set_entrypoint MODULE ENTRYPOINT)
     if(${ENTRYPOINT} STREQUAL "0")
-        add_target_link_flags(${MODULE} "-Wl,-entry,0")
+        target_link_options(${MODULE} PRIVATE "-Wl,-entry,0")
     elseif(ARCH STREQUAL "i386")
         set(_entrysymbol _${ENTRYPOINT})
         if(${ARGC} GREATER 2)
             set(_entrysymbol ${_entrysymbol}@${ARGV2})
         endif()
-        add_target_link_flags(${MODULE} "-Wl,-entry,${_entrysymbol}")
+        target_link_options(${MODULE} PRIVATE "-Wl,-entry,${_entrysymbol}")
     else()
-        add_target_link_flags(${MODULE} "-Wl,-entry,${ENTRYPOINT}")
+        target_link_options(${MODULE} PRIVATE "-Wl,-entry,${ENTRYPOINT}")
     endif()
 endfunction()
 
 function(set_subsystem MODULE SUBSYSTEM)
-    add_target_link_flags(${MODULE} "-Wl,--subsystem,${SUBSYSTEM}:5.01")
+    target_link_options(${MODULE} PRIVATE "-Wl,--subsystem,${SUBSYSTEM}:5.01")
 endfunction()
 
 function(set_image_base MODULE IMAGE_BASE)
-    add_target_link_flags(${MODULE} "-Wl,--image-base,${IMAGE_BASE}")
+    target_link_options(${MODULE} PRIVATE "-Wl,--image-base,${IMAGE_BASE}")
 endfunction()
 
 function(set_module_type_toolchain MODULE TYPE)
@@ -468,8 +472,8 @@ endmacro()
 
 function(add_linker_script _target _linker_script_file)
     get_filename_component(_file_full_path ${_linker_script_file} ABSOLUTE)
-    add_target_link_flags(${_target} "-Wl,-T,${_file_full_path}")
-    add_target_property(${_target} LINK_DEPENDS ${_file_full_path})
+    target_link_options(${_target} PRIVATE "-Wl,-T,${_file_full_path}")
+    set_property(TARGET ${_target} APPEND PROPERTY LINK_DEPENDS ${_file_full_path})
 endfunction()
 
 # Manage our C++ options
@@ -481,12 +485,12 @@ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<BOOL:$<TARGET_PROPERTY:WIT
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<BOOL:$<TARGET_PROPERTY:WITH_CXX_EXCEPTIONS>>,-fexceptions,-fno-exceptions>>")
 
 # G++ shipped with ROSBE uses sjlj exceptions on i386. Tell Clang it is so
-if (CLANG AND (ARCH STREQUAL "i386"))
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang" AND ARCH STREQUAL "i386")
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:WITH_CXX_EXCEPTIONS>>>:-fsjlj-exceptions>")
 endif()
 
 # Find default G++ libraries
-if (CLANG)
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     set(GXX_EXECUTABLE ${CMAKE_CXX_COMPILER_TARGET}-g++)
 else()
     set(GXX_EXECUTABLE ${CMAKE_CXX_COMPILER})

@@ -40,7 +40,7 @@
 
 #include <debug.h>
 
-#include <rosctrls.h>
+#include <ui/rosctrls.h>
 #include <windowsx.h>
 #include <process.h>
 #undef SubclassWindow
@@ -174,7 +174,12 @@ public:
 
         /* and finally display it */
         if (!IsWindow()) return;
-        SendMessage(WM_SETTEXT, 0, (LPARAM) ProgressText.GetString());
+        SetWindowText(ProgressText.GetString());
+    }
+
+    LRESULT OnEraseBkgnd(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
+    {
+        return TRUE;
     }
 
     LRESULT OnPaint(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
@@ -207,7 +212,7 @@ public:
                        &myRect,
                        DT_CENTER | DT_VCENTER | DT_NOPREFIX | DT_SINGLELINE,
                        GetSysColor(COLOR_CAPTIONTEXT),
-                       GetSysColor(COLOR_3DSHADOW),
+                       GetSysColor(COLOR_3DDKSHADOW),
                        1, 1);
 
         /* transfer the off-screen DC to the screen */
@@ -224,15 +229,28 @@ public:
 
     LRESULT OnSetText(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL &bHandled)
     {
-        if (lParam)
+        PCWSTR pszText = (PCWSTR)lParam;
+        if (pszText)
         {
-            m_szProgressText = (PCWSTR) lParam;
+            if (m_szProgressText != pszText)
+            {
+                m_szProgressText = pszText;
+                InvalidateRect(NULL, TRUE);
+            }
         }
-        return 0;
+        else
+        {
+            if (!m_szProgressText.IsEmpty())
+            {
+                m_szProgressText.Empty();
+                InvalidateRect(NULL, TRUE);
+            }
+        }
+        return TRUE;
     }
 
     BEGIN_MSG_MAP(CDownloaderProgress)
-        MESSAGE_HANDLER(WM_ERASEBKGND, OnPaint)
+        MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBkgnd)
         MESSAGE_HANDLER(WM_PAINT, OnPaint)
         MESSAGE_HANDLER(WM_SETTEXT, OnSetText)
     END_MSG_MAP()
@@ -406,16 +424,23 @@ INT_PTR CALLBACK CDownloadManager::DownloadDlgProc(HWND Dlg, UINT uMsg, WPARAM w
 
         bCancelled = FALSE;
 
-        hIconBg = (HICON) GetClassLongPtrW(hMainWnd, GCLP_HICON);
-        hIconSm = (HICON) GetClassLongPtrW(hMainWnd, GCLP_HICONSM);
+        if (hMainWnd)
+        {
+            hIconBg = (HICON)GetClassLongPtrW(hMainWnd, GCLP_HICON);
+            hIconSm = (HICON)GetClassLongPtrW(hMainWnd, GCLP_HICONSM);
+        }
+        if (!hMainWnd || (!hIconBg || !hIconSm))
+        {
+            /* Load the default icon */
+            hIconBg = hIconSm = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_MAIN));
+        }
 
         if (hIconBg && hIconSm)
         {
-            SendMessageW(Dlg, WM_SETICON, ICON_BIG, (LPARAM) hIconBg);
-            SendMessageW(Dlg, WM_SETICON, ICON_SMALL, (LPARAM) hIconSm);
+            SendMessageW(Dlg, WM_SETICON, ICON_BIG, (LPARAM)hIconBg);
+            SendMessageW(Dlg, WM_SETICON, ICON_SMALL, (LPARAM)hIconSm);
         }
 
-        SetWindowLongPtrW(Dlg, GWLP_USERDATA, 0);
         HWND Item = GetDlgItem(Dlg, IDC_DOWNLOAD_PROGRESS);
         if (Item)
         {
@@ -424,6 +449,8 @@ INT_PTR CALLBACK CDownloadManager::DownloadDlgProc(HWND Dlg, UINT uMsg, WPARAM w
             ProgressBar.SubclassWindow(Item);
             ProgressBar.SendMessage(PBM_SETRANGE, 0, MAKELPARAM(0, 100));
             ProgressBar.SendMessage(PBM_SETPOS, 0, 0);
+            if (AppsDownloadList.GetSize() > 0)
+                ProgressBar.SetProgress(0, AppsDownloadList[0].SizeInBytes);
         }
 
         // Add a ListView
@@ -448,7 +475,6 @@ INT_PTR CALLBACK CDownloadManager::DownloadDlgProc(HWND Dlg, UINT uMsg, WPARAM w
         DownloadParam *param = new DownloadParam(Dlg, AppsDownloadList, szCaption);
         unsigned int ThreadId;
         HANDLE Thread = (HANDLE)_beginthreadex(NULL, 0, ThreadFunc, (void *) param, 0, &ThreadId);
-
         if (!Thread)
         {
             return FALSE;
@@ -468,6 +494,8 @@ INT_PTR CALLBACK CDownloadManager::DownloadDlgProc(HWND Dlg, UINT uMsg, WPARAM w
         return FALSE;
 
     case WM_CLOSE:
+        if (ProgressBar)
+            ProgressBar.UnsubclassWindow(TRUE);
         if (CDownloadManager::bModal)
         {
             ::EndDialog(Dlg, 0);
@@ -518,7 +546,7 @@ VOID CDownloadManager::UpdateProgress(
         }
 
         /* paste it into our dialog and don't do it again in this instance */
-        SendMessageW(Item, WM_SETTEXT, 0, (LPARAM) buf.GetString());
+        ::SetWindowText(Item, buf.GetString());
         UrlHasBeenCopied = TRUE;
     }
 }
@@ -529,7 +557,7 @@ BOOL ShowLastError(
     DWORD dwLastError)
 {
     CLocalPtr<WCHAR> lpMsg;
-    
+
     if (!FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
                         FORMAT_MESSAGE_IGNORE_INSERTS |
                         (bInetError ? FORMAT_MESSAGE_FROM_HMODULE : FORMAT_MESSAGE_FROM_SYSTEM),
@@ -591,8 +619,8 @@ unsigned int WINAPI CDownloadManager::ThreadFunc(LPVOID param)
         if (Item)
         {
             ProgressBar.SetMarquee(FALSE);
-            ProgressBar.SendMessage(WM_SETTEXT, 0, (LPARAM) L"");
             ProgressBar.SendMessage(PBM_SETPOS, 0, 0);
+            ProgressBar.SetProgress(0, InfoArray[iAppId].SizeInBytes);
         }
 
         // is this URL an update package for RAPPS? if so store it in a different place
@@ -622,7 +650,7 @@ unsigned int WINAPI CDownloadManager::ThreadFunc(LPVOID param)
             szNewCaption.LoadStringW(IDS_DL_DIALOG_DB_UNOFFICIAL_DOWNLOAD_DISP);
             break;
         }
-        
+
         if (!IsWindow(hDlg)) goto end;
         SetWindowTextW(hDlg, szNewCaption.GetString());
 
@@ -913,7 +941,7 @@ unsigned int WINAPI CDownloadManager::ThreadFunc(LPVOID param)
 
             if (!IsWindow(hDlg)) goto end;
             SetWindowTextW(hDlg, szMsgText.GetString());
-            SendMessageW(GetDlgItem(hDlg, IDC_DOWNLOAD_STATUS), WM_SETTEXT, 0, (LPARAM) Path.GetString());
+            ::SetDlgItemText(hDlg, IDC_DOWNLOAD_STATUS, Path.GetString());
 
             // this may take a while, depending on the file size
             if (!VerifyInteg(InfoArray[iAppId].szSHA1.GetString(), Path.GetString()))
@@ -1030,12 +1058,12 @@ BOOL DownloadListOfApplications(const ATL::CSimpleArray<CAvailableApplicationInf
     return TRUE;
 }
 
-BOOL DownloadApplication(CAvailableApplicationInfo* pAppInfo, BOOL bIsModal)
+BOOL DownloadApplication(CAvailableApplicationInfo* pAppInfo)
 {
     if (!pAppInfo)
         return FALSE;
 
-    CDownloadManager::Download(*pAppInfo, bIsModal);
+    CDownloadManager::Download(*pAppInfo, FALSE);
     return TRUE;
 }
 

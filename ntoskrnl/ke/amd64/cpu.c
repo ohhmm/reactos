@@ -27,52 +27,30 @@ ULONG KeLargestCacheLine = 0x40;
 ULONG KiDmaIoCoherency = 0;
 BOOLEAN KiSMTProcessorsPresent;
 
-/* Freeze data */
-KIRQL KiOldIrql;
-ULONG KiFreezeFlag;
-
 /* Flush data */
 volatile LONG KiTbFlushTimeStamp;
 
 /* CPU Signatures */
 static const CHAR CmpIntelID[]       = "GenuineIntel";
 static const CHAR CmpAmdID[]         = "AuthenticAMD";
-static const CHAR CmpCyrixID[]       = "CyrixInstead";
-static const CHAR CmpTransmetaID[]   = "GenuineTMx86";
 static const CHAR CmpCentaurID[]     = "CentaurHauls";
-static const CHAR CmpRiseID[]        = "RiseRiseRise";
+
+typedef union _CPU_SIGNATURE
+{
+    struct
+    {
+        ULONG Step : 4;
+        ULONG Model : 4;
+        ULONG Family : 4;
+        ULONG Unused : 4;
+        ULONG ExtendedModel : 4;
+        ULONG ExtendedFamily : 8;
+        ULONG Unused2 : 4;
+    };
+    ULONG AsULONG;
+} CPU_SIGNATURE;
 
 /* FUNCTIONS *****************************************************************/
-
-VOID
-NTAPI
-KiSetProcessorType(VOID)
-{
-    CPU_INFO CpuInfo;
-    ULONG Stepping, Type;
-
-    /* Do CPUID 1 now */
-    KiCpuId(&CpuInfo, 1);
-
-    /*
-     * Get the Stepping and Type. The stepping contains both the
-     * Model and the Step, while the Type contains the returned Type.
-     * We ignore the family.
-     *
-     * For the stepping, we convert this: zzzzzzxy into this: x0y
-     */
-    Stepping = CpuInfo.Eax & 0xF0;
-    Stepping <<= 4;
-    Stepping += (CpuInfo.Eax & 0xFF);
-    Stepping &= 0xF0F;
-    Type = CpuInfo.Eax & 0xF00;
-    Type >>= 8;
-
-    /* Save them in the PRCB */
-    KeGetCurrentPrcb()->CpuID = TRUE;
-    KeGetCurrentPrcb()->CpuType = (UCHAR)Type;
-    KeGetCurrentPrcb()->CpuStep = (USHORT)Stepping;
-}
 
 ULONG
 NTAPI
@@ -93,25 +71,78 @@ KiGetCpuVendor(VOID)
     /* Now check the CPU Type */
     if (!strcmp((PCHAR)Prcb->VendorString, CmpIntelID))
     {
-        return CPU_INTEL;
+        Prcb->CpuVendor = CPU_INTEL;
     }
     else if (!strcmp((PCHAR)Prcb->VendorString, CmpAmdID))
     {
-        return CPU_AMD;
+        Prcb->CpuVendor = CPU_AMD;
     }
     else if (!strcmp((PCHAR)Prcb->VendorString, CmpCentaurID))
     {
         DPRINT1("VIA CPUs not fully supported\n");
-        return CPU_VIA;
+        Prcb->CpuVendor = CPU_VIA;
     }
-    else if (!strcmp((PCHAR)Prcb->VendorString, CmpRiseID))
+    else
     {
-        DPRINT1("Rise CPUs not fully supported\n");
-        return 0;
+        /* Invalid CPU */
+        DPRINT1("%s CPU support not fully tested!\n", Prcb->VendorString);
+        Prcb->CpuVendor = CPU_UNKNOWN;
     }
 
-    /* Invalid CPU */
-    return CPU_UNKNOWN;
+    return Prcb->CpuVendor;
+}
+
+VOID
+NTAPI
+KiSetProcessorType(VOID)
+{
+    CPU_INFO CpuInfo;
+    CPU_SIGNATURE CpuSignature;
+    BOOLEAN ExtendModel;
+    ULONG Stepping, Type, Vendor;
+
+    /* This initializes Prcb->CpuVendor */
+    Vendor = KiGetCpuVendor();
+
+    /* Do CPUID 1 now */
+    KiCpuId(&CpuInfo, 1);
+
+    /*
+     * Get the Stepping and Type. The stepping contains both the
+     * Model and the Step, while the Type contains the returned Family.
+     *
+     * For the stepping, we convert this: zzzzzzxy into this: x0y
+     */
+    CpuSignature.AsULONG = CpuInfo.Eax;
+    Stepping = CpuSignature.Model;
+    ExtendModel = (CpuSignature.Family == 15);
+#if ( (NTDDI_VERSION >= NTDDI_WINXPSP2) && (NTDDI_VERSION < NTDDI_WS03) ) || (NTDDI_VERSION >= NTDDI_WS03SP1)
+    if (CpuSignature.Family == 6)
+    {
+        ExtendModel |= (Vendor == CPU_INTEL);
+#if (NTDDI_VERSION >= NTDDI_WIN8)
+        ExtendModel |= (Vendor == CPU_CENTAUR);
+#endif
+    }
+#endif
+    if (ExtendModel)
+    {
+        /* Add ExtendedModel to distinguish from non-extended values. */
+        Stepping |= (CpuSignature.ExtendedModel << 4);
+    }
+    Stepping = (Stepping << 8) | CpuSignature.Step;
+    Type = CpuSignature.Family;
+    if (CpuSignature.Family == 15)
+    {
+        /* Add ExtendedFamily to distinguish from non-extended values.
+         * It must not be larger than 0xF0 to avoid overflow. */
+        Type += min(CpuSignature.ExtendedFamily, 0xF0);
+    }
+
+    /* Save them in the PRCB */
+    KeGetCurrentPrcb()->CpuID = TRUE;
+    KeGetCurrentPrcb()->CpuType = (UCHAR)Type;
+    KeGetCurrentPrcb()->CpuStep = (USHORT)Stepping;
 }
 
 ULONG
@@ -124,7 +155,7 @@ KiGetFeatureBits(VOID)
     CPU_INFO CpuInfo;
 
     /* Get the Vendor ID */
-    Vendor = KiGetCpuVendor();
+    Vendor = Prcb->CpuVendor;
 
     /* Make sure we got a valid vendor ID at least. */
     if (!Vendor) return FeatureBits;
@@ -344,7 +375,7 @@ KiRestoreProcessorControlState(PKPROCESSOR_STATE ProcessorState)
 //    __ltr(&ProcessorState->SpecialRegisters.Tr);
     __lidt(&ProcessorState->SpecialRegisters.Idtr.Limit);
 
-//    __ldmxcsr(&ProcessorState->SpecialRegisters.MxCsr); // FIXME
+    _mm_setcsr(ProcessorState->SpecialRegisters.MxCsr);
 //    ProcessorState->SpecialRegisters.DebugControl
 //    ProcessorState->SpecialRegisters.LastBranchToRip
 //    ProcessorState->SpecialRegisters.LastBranchFromRip
@@ -386,7 +417,7 @@ KiSaveProcessorControlState(OUT PKPROCESSOR_STATE ProcessorState)
     __str(&ProcessorState->SpecialRegisters.Tr);
     __sidt(&ProcessorState->SpecialRegisters.Idtr.Limit);
 
-//    __stmxcsr(&ProcessorState->SpecialRegisters.MxCsr);
+    ProcessorState->SpecialRegisters.MxCsr = _mm_getcsr();
 //    ProcessorState->SpecialRegisters.DebugControl =
 //    ProcessorState->SpecialRegisters.LastBranchToRip =
 //    ProcessorState->SpecialRegisters.LastBranchFromRip =

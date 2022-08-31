@@ -332,7 +332,7 @@ CONSTANT(DBG_STATUS_CONTROL_C),
 //CONSTANT(KI_SLIST_FAULT_COUNT_MAXIMUM), // i386
 //CONSTANTUSER_CALLBACK_FILTER),
 
-#ifndef _M_ARM
+#if !defined(_M_ARM) && !defined(_M_ARM64)
 CONSTANT(MAXIMUM_IDTVECTOR),
 //CONSTANT(MAXIMUM_PRIMARY_VECTOR),
 CONSTANT(PRIMARY_VECTOR_BASE),
@@ -762,6 +762,7 @@ OFFSET(ThSystemCallNumber, KTHREAD, SystemCallNumber),
 OFFSET(ThTrapFrame, KTHREAD, TrapFrame),
 OFFSET(ThApcState, KTHREAD, ApcState),
 OFFSET(ThPriority, KTHREAD, Priority), // obsolete
+OFFSET(ThSwapBusy, KTHREAD, SwapBusy),
 OFFSET(ThContextSwitches, KTHREAD, ContextSwitches),
 OFFSET(ThState, KTHREAD, State),
 OFFSET(ThProcess, KTHREAD, Process), // thProcess in native headers

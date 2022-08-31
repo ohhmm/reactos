@@ -107,6 +107,13 @@ RtlLookupFunctionTable(
     return Table;
 }
 
+PRUNTIME_FUNCTION
+NTAPI
+RtlpLookupDynamicFunctionEntry(
+    _In_ DWORD64 ControlPc,
+    _Out_ PDWORD64 ImageBase,
+    _In_ PUNWIND_HISTORY_TABLE HistoryTable);
+
 /*! RtlLookupFunctionEntry
  * \brief Locates the RUNTIME_FUNCTION entry corresponding to a code address.
  * \ref http://msdn.microsoft.com/en-us/library/ms680597(VS.85).aspx
@@ -126,10 +133,10 @@ RtlLookupFunctionEntry(
     /* Find the corresponding table */
     FunctionTable = RtlLookupFunctionTable(ControlPc, ImageBase, &TableLength);
 
-    /* Fail, if no table is found */
+    /* If no table is found, try dynamic function tables */
     if (!FunctionTable)
     {
-        return NULL;
+        return RtlpLookupDynamicFunctionEntry(ControlPc, ImageBase, HistoryTable);
     }
 
     /* Use relative virtual address */
@@ -162,40 +169,6 @@ RtlLookupFunctionEntry(
 
     /* Nothing found, return NULL */
     return NULL;
-}
-
-BOOLEAN
-NTAPI
-RtlAddFunctionTable(
-    IN PRUNTIME_FUNCTION FunctionTable,
-    IN DWORD EntryCount,
-    IN DWORD64 BaseAddress)
-{
-    UNIMPLEMENTED;
-    return FALSE;
-}
-
-BOOLEAN
-NTAPI
-RtlDeleteFunctionTable(
-    IN PRUNTIME_FUNCTION FunctionTable)
-{
-    UNIMPLEMENTED;
-    return FALSE;
-}
-
-BOOLEAN
-NTAPI
-RtlInstallFunctionTableCallback(
-    IN DWORD64 TableIdentifier,
-    IN DWORD64 BaseAddress,
-    IN DWORD Length,
-    IN PGET_RUNTIME_FUNCTION_CALLBACK Callback,
-    IN PVOID Context,
-    IN PCWSTR OutOfProcessCallbackDll)
-{
-    UNIMPLEMENTED;
-    return FALSE;
 }
 
 static
@@ -523,16 +496,6 @@ RtlVirtualUnwind(
     /* Get a pointer to the unwind info */
     UnwindInfo = RVA(ImageBase, FunctionEntry->UnwindData);
 
-    /* Check for chained info */
-    if (UnwindInfo->Flags & UNW_FLAG_CHAININFO)
-    {
-        UNIMPLEMENTED_DBGBREAK();
-
-        /* See https://docs.microsoft.com/en-us/cpp/build/chained-unwind-info-structures */
-        FunctionEntry = (PRUNTIME_FUNCTION)&(UnwindInfo->UnwindCode[(UnwindInfo->CountOfCodes + 1) & ~1]);
-        UnwindInfo = RVA(ImageBase, FunctionEntry->UnwindData);
-    }
-
     /* The language specific handler data follows the unwind info */
     LanguageHandler = ALIGN_UP_POINTER_BY(&UnwindInfo->UnwindCode[UnwindInfo->CountOfCodes], sizeof(ULONG));
     *HandlerData = (LanguageHandler + 1);
@@ -559,6 +522,8 @@ RtlVirtualUnwind(
     {
         i += UnwindOpSlots(UnwindInfo->UnwindCode[i]);
     }
+
+RepeatChainedInfo:
 
     /* Process the remaining unwind ops */
     while (i < UnwindInfo->CountOfCodes)
@@ -650,6 +615,16 @@ RtlVirtualUnwind(
         }
     }
 
+    /* Check for chained info */
+    if (UnwindInfo->Flags & UNW_FLAG_CHAININFO)
+    {
+        /* See https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#chained-unwind-info-structures */
+        FunctionEntry = (PRUNTIME_FUNCTION)&(UnwindInfo->UnwindCode[(UnwindInfo->CountOfCodes + 1) & ~1]);
+        UnwindInfo = RVA(ImageBase, FunctionEntry->UnwindData);
+        i = 0;
+        goto RepeatChainedInfo;
+    }
+
     /* Unwind is finished, pop new Rip from Stack */
     if (Context->Rsp != 0)
     {
@@ -681,7 +656,7 @@ Exit:
 */
 BOOLEAN
 NTAPI
-RtplUnwindInternal(
+RtlpUnwindInternal(
     _In_opt_ PVOID TargetFrame,
     _In_opt_ PVOID TargetIp,
     _In_ PEXCEPTION_RECORD ExceptionRecord,
@@ -726,8 +701,14 @@ RtplUnwindInternal(
                Note: this can happen after the first frame as the result of an exception */
             UnwindContext.Rip = *(DWORD64*)UnwindContext.Rsp;
             UnwindContext.Rsp += sizeof(DWORD64);
+
+            /* Copy the context back for the next iteration */
+            *ContextRecord = UnwindContext;
             continue;
         }
+
+        /* Save Rip before the virtual unwind */
+        DispatcherContext.ControlPc = UnwindContext.Rip;
 
         /* Do a virtual unwind to get the next frame */
         ExceptionRoutine = RtlVirtualUnwind(HandlerType,
@@ -774,7 +755,6 @@ RtplUnwindInternal(
                                   sizeof(DispatcherContext));
 
             /* Set up the variable fields of the dispatcher context */
-            DispatcherContext.ControlPc = ContextRecord->Rip;
             DispatcherContext.ImageBase = ImageBase;
             DispatcherContext.FunctionEntry = FunctionEntry;
             DispatcherContext.LanguageHandler = ExceptionRoutine;
@@ -905,7 +885,7 @@ RtlUnwindEx(
     }
 
     /* Call the internal function */
-    RtplUnwindInternal(TargetFrame,
+    RtlpUnwindInternal(TargetFrame,
                        TargetIp,
                        ExceptionRecord,
                        ReturnValue,

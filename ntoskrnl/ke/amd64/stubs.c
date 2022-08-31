@@ -14,7 +14,6 @@
 #include <debug.h>
 
 ULONG ProcessCount;
-BOOLEAN CcPfEnablePrefetcher;
 SIZE_T KeXStateLength = sizeof(XSAVE_FORMAT);
 
 VOID
@@ -26,6 +25,7 @@ NTSTATUS
 KiConvertToGuiThread(
     VOID);
 
+_Requires_lock_not_held_(Prcb->PrcbLock)
 VOID
 NTAPI
 KiDpcInterruptHandler(VOID)
@@ -61,6 +61,9 @@ KiDpcInterruptHandler(VOID)
     }
     else if (Prcb->NextThread)
     {
+        /* Acquire the PRCB lock */
+        KiAcquirePrcbLock(Prcb);
+
         /* Capture current thread data */
         OldThread = Prcb->CurrentThread;
         NewThread = Prcb->NextThread;
@@ -83,16 +86,6 @@ KiDpcInterruptHandler(VOID)
     /* Disable interrupts and go back to old irql */
     _disable();
     KeLowerIrql(OldIrql);
-}
-
-
-VOID
-FASTCALL
-KeZeroPages(IN PVOID Address,
-            IN ULONG Size)
-{
-    /* Not using XMMI in this routine */
-    RtlZeroMemory(Address, Size);
 }
 
 PVOID
@@ -122,6 +115,7 @@ KiSwitchKernelStack(PVOID StackBase, PVOID StackLimit)
     LONG_PTR StackOffset;
     SIZE_T StackSize;
     PKIPCR Pcr;
+    ULONG Eflags;
 
     /* Get the current thread */
     CurrentThread = KeGetCurrentThread();
@@ -142,6 +136,7 @@ KiSwitchKernelStack(PVOID StackBase, PVOID StackLimit)
     StackOffset = (PUCHAR)StackBase - (PUCHAR)CurrentThread->StackBase;
 
     /* Disable interrupts while messing with the stack */
+    Eflags = __readeflags();
     _disable();
 
     /* Set the new trap frame */
@@ -163,6 +158,9 @@ KiSwitchKernelStack(PVOID StackBase, PVOID StackLimit)
 
     /* Adjust Rsp0 in the TSS */
     Pcr->TssBase->Rsp0 += StackOffset;
+
+    /* Restore interrupts */
+    __writeeflags(Eflags);
 
     return OldStackBase;
 }

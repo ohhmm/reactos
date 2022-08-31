@@ -4,10 +4,19 @@
 #define RETURN(value) { _ret_ = value; goto _cleanup_; }
 #define CLEANUP /*unreachable*/ ASSERT(FALSE); _cleanup_
 #define END_CLEANUP return _ret_;
-
+#define IS_IMM_MODE() (gpsi && (gpsi->dwSRVIFlags & SRVINFO_IMM32))
 
 #define UserEnterCo UserEnterExclusive
 #define UserLeaveCo UserLeave
+
+typedef VOID (*TL_FN_FREE)(PVOID);
+
+typedef struct _TL
+{
+    struct _TL* next;
+    PVOID pobj;
+    TL_FN_FREE pfnFree;
+} TL, *PTL;
 
 extern PSERVERINFO gpsi;
 extern PTHREADINFO gptiCurrent;
@@ -18,6 +27,8 @@ extern BOOL g_AlwaysDisplayVersion;
 extern ATOM gaGuiConsoleWndClass;
 extern ATOM AtomDDETrack;
 extern ATOM AtomQOS;
+extern ATOM AtomImeLevel;
+extern ERESOURCE UserLock;
 
 CODE_SEG("INIT") NTSTATUS NTAPI InitUserImpl(VOID);
 VOID FASTCALL CleanupUserImpl(VOID);
@@ -47,5 +58,11 @@ RegWriteUserSetting(
     _In_ ULONG ulType,
     _In_reads_bytes_(cjDataSize) const VOID *pvData,
     _In_ ULONG cjDataSize);
+
+PGRAPHICS_DEVICE
+NTAPI
+InitDisplayDriver(
+    IN PWSTR pwszDeviceName,
+    IN PWSTR pwszRegKey);
 
 /* EOF */

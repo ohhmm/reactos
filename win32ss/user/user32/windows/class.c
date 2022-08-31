@@ -111,7 +111,7 @@ ClassNameToVersion(
             ERR("Couldn't get atom name for atom %x !\n", LOWORD((DWORD_PTR)lpszClass));
             return NULL;
         }
-        SectionName.Length = wcslen(SectionNameBuf) * sizeof(WCHAR);
+        SectionName.Length = (USHORT)wcslen(SectionNameBuf) * sizeof(WCHAR);
         TRACE("ClassNameToVersion got name %wZ from atom\n", &SectionName);
     }
     else
@@ -1134,6 +1134,8 @@ LONG_PTR IntGetWindowLong( HWND hwnd, INT offset, UINT size, BOOL unicode )
         {
             SetLastError(ERROR_ACCESS_DENIED);
             retvalue = 0;
+            ERR("Outside Access and Denied!\n");
+            break;
         }
         retvalue = (ULONG_PTR)IntGetWndProc(wndPtr, !unicode);
         break;
@@ -1827,7 +1829,7 @@ SetWindowWord ( HWND hWnd,int nIndex,WORD wNewWord )
         }
         break;
     }
-    return NtUserSetWindowLong( hWnd, nIndex, wNewWord, FALSE );
+    return (WORD)NtUserSetWindowLongPtr(hWnd, nIndex, wNewWord, FALSE);
 }
 
 /*
@@ -1841,7 +1843,7 @@ SetWindowLongA(
   int nIndex,
   LONG dwNewLong)
 {
-    return NtUserSetWindowLong(hWnd, nIndex, dwNewLong, TRUE);
+    return (LONG)NtUserSetWindowLongPtr(hWnd, nIndex, dwNewLong, TRUE);
 }
 
 /*
@@ -1854,7 +1856,7 @@ SetWindowLongW(
   int nIndex,
   LONG dwNewLong)
 {
-    return NtUserSetWindowLong(hWnd, nIndex, dwNewLong, FALSE);
+    return (LONG)NtUserSetWindowLongPtr(hWnd, nIndex, dwNewLong, FALSE);
 }
 
 #ifdef _WIN64

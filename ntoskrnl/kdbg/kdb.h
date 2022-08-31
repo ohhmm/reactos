@@ -1,12 +1,6 @@
 #pragma once
 #include "internal/kd.h"
 
-/* DEFINES *******************************************************************/
-
-/* formerly located in kdbg/kdb_symbols.c */
-#define TAG_KDBS 'SBDK'
-#define TAG_KDBG 'GBDK'
-
 /* TYPES *********************************************************************/
 
 /* from kdb.c */
@@ -70,12 +64,12 @@ typedef enum _KDB_OUTPUT_SETTINGS
 
 LONG
 KdbpDisassemble(
-   IN ULONG Address,
+   IN ULONG_PTR Address,
    IN ULONG IntelSyntax);
 
 LONG
 KdbpGetInstLength(
-   IN ULONG Address);
+   IN ULONG_PTR Address);
 
 /* from i386/kdb_help.S */
 
@@ -102,16 +96,16 @@ KdbpCliMainLoop(
    IN BOOLEAN EnteredOnSingleStep);
 
 VOID
-KdbpCliModuleLoaded(
-   IN PUNICODE_STRING Name);
-
-VOID
 KdbpCliInterpretInitFile(VOID);
 
 VOID
 KdbpPrint(
    IN PCHAR Format,
    IN ...  OPTIONAL);
+
+VOID
+KdbpPrintUnicodeString(
+    _In_ PCUNICODE_STRING String);
 
 BOOLEAN
 NTAPI
@@ -148,7 +142,6 @@ KdbpRpnEvaluateParsedExpression(
 BOOLEAN
 KdbpSymFindModule(
     IN PVOID Address  OPTIONAL,
-    IN LPCWSTR Name  OPTIONAL,
     IN INT Index  OPTIONAL,
     OUT PLDR_DATA_TABLE_ENTRY* pLdrEntry);
 
@@ -160,7 +153,8 @@ KdbSymPrintAddress(
 
 VOID
 KdbSymProcessSymbols(
-    IN PLDR_DATA_TABLE_ENTRY LdrEntry);
+    _Inout_ PLDR_DATA_TABLE_ENTRY LdrEntry,
+    _In_ BOOLEAN Load);
 
 /* from kdb.c */
 
@@ -269,16 +263,7 @@ CHAR
 KdbpTryGetCharSerial(ULONG Retry);
 
 VOID
-KdbEnter(VOID);
-VOID
-DbgRDebugInit(VOID);
-VOID
-DbgShowFiles(VOID);
-VOID
-DbgEnableFile(PCH Filename);
-VOID
-DbgDisableFile(PCH Filename);
-VOID
 KbdDisableMouse(VOID);
+
 VOID
 KbdEnableMouse(VOID);

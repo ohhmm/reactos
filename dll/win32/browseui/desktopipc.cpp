@@ -358,7 +358,7 @@ static HRESULT ExplorerMessageLoop(IEThreadParamBlock * parameters)
 
     /* Handle /select parameter */
     PUITEMID_CHILD pidlSelect = NULL;
-    if ((parameters->dwFlags & SH_EXPLORER_CMDLINE_FLAG_SELECT) && 
+    if ((parameters->dwFlags & SH_EXPLORER_CMDLINE_FLAG_SELECT) &&
         (ILGetNext(parameters->directoryPIDL) != NULL))
     {
         pidlSelect = ILClone(ILFindLastID(parameters->directoryPIDL));
@@ -597,11 +597,11 @@ extern "C" HRESULT WINAPI SHOpenNewFrame(LPITEMIDLIST pidl, IUnknown *paramC, lo
         parameters->offset10 = param10;
     parameters->directoryPIDL = pidl;
     parameters->dwFlags = dwFlags;
-    
+
     HRESULT hr = SHOpenFolderWindow(parameters);
-    
+
     SHDestroyIETHREADPARAM(parameters);
-    
+
     return hr;
 }
 
@@ -609,7 +609,7 @@ extern "C" HRESULT WINAPI SHOpenNewFrame(LPITEMIDLIST pidl, IUnknown *paramC, lo
 * SHCreateFromDesktop			[BROWSEUI.106]
 * parameter is a FolderInfo
 */
-BOOL WINAPI SHCreateFromDesktop(ExplorerCommandLineParseResults * parseResults)
+BOOL WINAPI SHCreateFromDesktop(_In_ PEXPLORER_CMDLINE_PARSE_RESULTS parseResults)
 {
     TRACE("SHCreateFromDesktop\n");
 

@@ -24,10 +24,6 @@ extern "C" {
 #define _HEAP_MAXREQ 0xFFFFFFE0
 #endif
 
-#ifndef _STATIC_ASSERT
-#define _STATIC_ASSERT(expr) extern char (*static_assert(void)) [(expr) ? 1 : -1]
-#endif
-
 /* Return codes for _heapwalk()  */
 #define _HEAPEMPTY (-1)
 #define _HEAPOK (-2)
@@ -314,7 +310,7 @@ extern "C" {
 
 #if(defined(_X86_) && !defined(__x86_64))
 #define _ALLOCA_S_MARKER_SIZE 8
-#elif defined(__ia64__) || defined(__x86_64)
+#elif defined(__ia64__) || defined(__x86_64) || defined(__arm64__)
 #define _ALLOCA_S_MARKER_SIZE 16
 #elif defined(__arm__)
 #define _ALLOCA_S_MARKER_SIZE 8

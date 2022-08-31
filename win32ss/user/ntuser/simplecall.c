@@ -114,13 +114,26 @@ NtUserCallNoParam(DWORD Routine)
             break;
         }
 
+        case NOPARAM_ROUTINE_GETIMESHOWSTATUS:
+            Result = !!gfIMEShowStatus;
+            break;
+
         /* this is a ReactOS only case and is needed for gui-on-demand */
         case NOPARAM_ROUTINE_ISCONSOLEMODE:
             Result = (ScreenDeviceContext == NULL);
             break;
 
         case NOPARAM_ROUTINE_UPDATEPERUSERIMMENABLING:
-            gpsi->dwSRVIFlags |= SRVINFO_IMM32; // Always set.
+            // TODO: This should also check the registry!
+            // see https://www.pctipsbox.com/fix-available-for-ie7-memory-leaks-on-xp-sp3/ for more information
+            if (NLS_MB_CODE_PAGE_TAG)
+            {
+                gpsi->dwSRVIFlags |= SRVINFO_IMM32;
+            }
+            else
+            {
+                gpsi->dwSRVIFlags &= ~SRVINFO_IMM32;
+            }
             Result = TRUE; // Always return TRUE.
             break;
 
@@ -512,28 +525,28 @@ NtUserCallTwoParam(
             Ret = 0;
             Window = UserGetWindowObject(hwnd);
             if (!Window)
-            {
                 break;
-            }
-            if (MsqIsHung(Window->head.pti, MSQ_HUNG))
+
+            if (gpqForeground && !fAltTab)
             {
-                // TODO: Make the window ghosted and activate.
-                break;
-            }
-            if (fAltTab)
-            {
-                if (Window->style & WS_MINIMIZE)
+                PWND pwndActive = gpqForeground->spwndActive;
+                if (pwndActive && !(pwndActive->ExStyle & WS_EX_TOPMOST))
                 {
-                    UserPostMessage(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+                    co_WinPosSetWindowPos(pwndActive, HWND_BOTTOM, 0, 0, 0, 0,
+                                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                          SWP_ASYNCWINDOWPOS);
                 }
-                /* bring window to top and activate */
-                co_WinPosSetWindowPos(Window, HWND_TOP, 0, 0, 0, 0,
-                                      SWP_NOSIZE | SWP_NOMOVE | SWP_NOSENDCHANGING |
-                                      SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS);
-            }
-            else
-            {
+
                 UserSetActiveWindow(Window);
+                break;
+            }
+
+            co_IntSetForegroundWindowMouse(Window);
+
+            if (fAltTab && (Window->style & WS_MINIMIZE))
+            {
+                MSG msg = { Window->head.h, WM_SYSCOMMAND, SC_RESTORE, 0 };
+                MsqPostMessage(Window->head.pti, &msg, FALSE, QS_POSTMESSAGE, 0, 0);
             }
             break;
         }
@@ -660,6 +673,10 @@ NtUserCallHwndLock(
             co_IntUpdateWindows(Window, RDW_ALLCHILDREN, FALSE);
             Ret = TRUE;
             break;
+
+        case HWNDLOCK_ROUTINE_CHECKIMESHOWSTATUSINTHRD:
+            // TODO:
+            break;
     }
 
     UserDerefObjectCo(Window);
@@ -761,7 +778,14 @@ NtUserCallHwndParam(
     switch (Routine)
     {
         case HWNDPARAM_ROUTINE_KILLSYSTEMTIMER:
-            return IntKillTimer(UserGetWindowObject(hWnd), (UINT_PTR)Param, TRUE);
+        {
+            DWORD ret;
+
+            UserEnterExclusive();
+            ret = IntKillTimer(UserGetWindowObject(hWnd), (UINT_PTR)Param, TRUE);
+            UserLeave();
+            return ret;
+        }
 
         case HWNDPARAM_ROUTINE_SETWNDCONTEXTHLPID:
         {
@@ -884,6 +908,10 @@ NtUserCallHwndParamLock(
 
     switch (Routine)
     {
+        case TWOPARAM_ROUTINE_IMESHOWSTATUSCHANGE:
+            Ret = IntBroadcastImeShowStatusChange(Window, !!Param);
+            break;
+
         case TWOPARAM_ROUTINE_VALIDATERGN:
         {
             PREGION Rgn = REGION_LockRgn((HRGN)Param);

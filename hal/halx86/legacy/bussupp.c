@@ -152,6 +152,7 @@ HalpAllocateBusHandler(IN INTERFACE_TYPE InterfaceType,
     return Bus;
 }
 
+#ifndef _MINIHAL_
 CODE_SEG("INIT")
 VOID
 NTAPI
@@ -225,6 +226,7 @@ HalpRegisterInternalBusHandlers(VOID)
     /* No support for EISA or MCA */
     ASSERT(HalpBusType == MACHINE_TYPE_ISA);
 }
+#endif // _MINIHAL_
 
 #ifndef _MINIHAL_
 CODE_SEG("INIT")
@@ -785,7 +787,9 @@ ShowSize(ULONG x)
 CODE_SEG("INIT")
 VOID
 NTAPI
-HalpDebugPciDumpBus(IN ULONG i,
+HalpDebugPciDumpBus(IN PBUS_HANDLER BusHandler,
+                    IN PCI_SLOT_NUMBER PciSlot,
+                    IN ULONG i,
                     IN ULONG j,
                     IN ULONG k,
                     IN PPCI_COMMON_CONFIG PciData)
@@ -961,12 +965,30 @@ HalpDebugPciDumpBus(IN ULONG i,
             Mem = 0;
         if (Mem)
         {
+            ULONG PciBar = 0xFFFFFFFF;
+
+            HalpWritePCIConfig(BusHandler,
+                               PciSlot,
+                               &PciBar,
+                               FIELD_OFFSET(PCI_COMMON_HEADER, u.type0.BaseAddresses[b]),
+                               sizeof(ULONG));
+            HalpReadPCIConfig(BusHandler,
+                              PciSlot,
+                              &PciBar,
+                              FIELD_OFFSET(PCI_COMMON_HEADER, u.type0.BaseAddresses[b]),
+                              sizeof(ULONG));
+            HalpWritePCIConfig(BusHandler,
+                               PciSlot,
+                               &Mem,
+                               FIELD_OFFSET(PCI_COMMON_HEADER, u.type0.BaseAddresses[b]),
+                               sizeof(ULONG));
+
             /* Decode the address type */
-            if (Mem & PCI_ADDRESS_IO_SPACE)
+            if (PciBar & PCI_ADDRESS_IO_SPACE)
             {
                 /* Guess the size */
                 Size = 1 << 2;
-                while (!(Mem & Size) && (Size)) Size <<= 1;
+                while (!(PciBar & Size) && (Size)) Size <<= 1;
 
                 /* Print it out */
                 DbgPrint("\tI/O ports at %04lx", Mem & PCI_ADDRESS_IO_ADDRESS_MASK);
@@ -975,8 +997,8 @@ HalpDebugPciDumpBus(IN ULONG i,
             else
             {
                 /* Guess the size */
-                Size = 1 << 8;
-                while (!(Mem & Size) && (Size)) Size <<= 1;
+                Size = 1 << 4;
+                while (!(PciBar & Size) && (Size)) Size <<= 1;
 
                 /* Print it out */
                 DbgPrint("\tMemory at %08lx (%d-bit, %sprefetchable)",
@@ -1100,7 +1122,7 @@ HalpInitializePciBus(VOID)
                 if (PciData->VendorID == PCI_INVALID_VENDORID) continue;
 
                 /* Print out the entry */
-                HalpDebugPciDumpBus(i, j, k, PciData);
+                HalpDebugPciDumpBus(BusHandler, PciSlot, i, j, k, PciData);
 
                 /* Check if this is a Cardbus bridge */
                 if (PCI_CONFIGURATION_TYPE(PciData) == PCI_CARDBUS_BRIDGE_TYPE)
@@ -1230,6 +1252,7 @@ HalpInitializePciBus(VOID)
 #endif
 }
 
+#ifndef _MINIHAL_
 CODE_SEG("INIT")
 VOID
 NTAPI
@@ -1262,6 +1285,7 @@ HalpRegisterKdSupportFunctions(VOID)
     /* Register ACPI stub */
     KdCheckPowerButton = HalpCheckPowerButton;
 }
+#endif // _MINIHAL_
 
 NTSTATUS
 NTAPI
@@ -1405,6 +1429,7 @@ HaliTranslateBusAddress(IN INTERFACE_TYPE InterfaceType,
 
 /* PUBLIC FUNCTIONS **********************************************************/
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -1430,6 +1455,7 @@ HalAdjustResourceList(IN PIO_RESOURCE_REQUIREMENTS_LIST *ResourceList)
     HalDereferenceBusHandler(Handler);
     return Status;
 }
+#endif // _MINIHAL_
 
 /*
  * @implemented
@@ -1474,6 +1500,7 @@ HalAssignSlotResources(IN PUNICODE_STRING RegistryPath,
     }
 }
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -1493,6 +1520,7 @@ HalGetBusData(IN BUS_DATA_TYPE BusDataType,
                                  0,
                                  Length);
 }
+#endif // _MINIHAL_
 
 /*
  * @implemented
@@ -1526,6 +1554,7 @@ HalGetBusDataByOffset(IN BUS_DATA_TYPE BusDataType,
     return Status;
 }
 
+#ifndef _MINIHAL_
 /*
  * @implemented
  */
@@ -1623,6 +1652,7 @@ HalSetBusDataByOffset(IN BUS_DATA_TYPE BusDataType,
     HalDereferenceBusHandler(Handler);
     return Status;
 }
+#endif // _MINIHAL_
 
 /*
  * @implemented
